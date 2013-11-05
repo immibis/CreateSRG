@@ -1,3 +1,5 @@
+import gnu.trove.list.array.TByteArrayList;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -12,6 +14,7 @@ import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -36,6 +39,9 @@ import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TryCatchBlockNode;
+
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 
 
 public class Main {
@@ -64,8 +70,15 @@ public class Main {
 	}
 	
 	static class ExceptionEntry {
-		MethodDetails from;
-		Set<String> caught = new HashSet<>();
+		MethodDetails method;
+		List<TryBlock> tryBlocks = new ArrayList<>();
+	}
+	
+	static class TryBlock {
+		Class<?> catches;
+		boolean isReachable;
+		MethodDetails method;
+		TryCatchBlockNode node;
 	}
 	
 	static class MethodDetails implements Comparable<MethodDetails> {
@@ -75,6 +88,7 @@ public class Main {
 		
 		// used during exception discovery and propagation phase
 		List<ExceptionEntry> exceptionsFrom = new ArrayList<>();
+		List<ExceptionEntry> exceptionsTo = new ArrayList<>();
 		Set<String> exceptions = new HashSet<>();
 
 		final MethodIdentifier ident;
@@ -207,8 +221,6 @@ public class Main {
 	private static ClassLoader loader;
 	
 	public static void main(String[] args) throws Exception {
-		System.in.read();
-		
 		File libdir = new File(args[0]);
 		File mcfile = new File(args[1]);
 		File confdir = new File(args[2]);
@@ -407,6 +419,8 @@ public class Main {
 			
 			doExceptionPropagation(loader, allMethods.values());
 			
+			addBogusThrows(loader, classNames);
+			
 			long te2 = System.nanoTime();
 			reportTime(te2 - te1);
 			
@@ -462,26 +476,85 @@ public class Main {
 	
 	
 	
+	private static Collection<TryBlock> allTryCatchBlocks = new ArrayList<>();
 	
 	
 	
 	
+	
+	
+	private static Class<?>[] typesToClasses(Type[] types) throws Exception {
+		Class[] rv = new Class[types.length];
+		
+		// convert Types to Classes
+		for(int k = 0; k < types.length; k++) {
+			Type t = types[k];
+			
+			switch(t.getSort()) {
+			case Type.OBJECT:
+				rv[k] = loader.loadClass(t.getClassName());
+				break;
+			case Type.ARRAY:
+				rv[k] = Class.forName(t.getInternalName().replace('/', '.'), false, loader);
+				break;
+			case Type.BOOLEAN: rv[k] = boolean.class; break;
+			case Type.BYTE: rv[k] = byte.class; break;
+			case Type.CHAR: rv[k] = char.class; break;
+			case Type.DOUBLE: rv[k] = double.class; break;
+			case Type.FLOAT: rv[k] = float.class; break;
+			case Type.INT: rv[k] = int.class; break;
+			case Type.LONG: rv[k] = long.class; break;
+			case Type.SHORT: rv[k] = short.class; break;
+			default: throw new Exception(t.toString());
+			}
+		}
+		return rv;
+	}
+	
+	
+	
+	private static TryBlock searchExceptionHandlerTable(List<TryBlock> handlers, Class<?> exceptionClass, boolean markReachable) {
+		for(TryBlock tb : handlers) {
+			if(markReachable && exceptionClass.isAssignableFrom(tb.catches))
+				tb.isReachable = true;
+			if(tb.catches.isAssignableFrom(exceptionClass))
+				return tb;
+		}
+		return null;
+	}
+	
+	
+	private static Map<String, ClassNode> cachedNodes = new HashMap<>();
+	private static ClassNode getClassNode(String name) throws Exception {
+		ClassNode cn = cachedNodes.get(name);
+		if(cn != null)
+			return cn;
+		cn = new ClassNode();
+		try (InputStream in = loader.getResourceAsStream(name.replace('.', '/') + ".class")) {
+			new ClassReader(in).accept(cn, ClassReader.EXPAND_FRAMES);
+		}
+		cachedNodes.put(name, cn);
+		return cn;
+	}
 	
 
 	private static void getExceptions(URLClassLoader loader, MethodIdentifier method) throws Exception {
-		ClassNode cn = new ClassNode();
-		try (InputStream in = loader.getResourceAsStream(method.owner.replace('.', '/') + ".class")) {
-			new ClassReader(in).accept(cn, ClassReader.EXPAND_FRAMES);
-		}
+		ClassNode cn = getClassNode(method.owner);
 		
 		MethodDetails methodGroup = allMethods.get(method);
 		
 		for(MethodDetails derived : methodGroup.allDerived) {
 			ExceptionEntry e = new ExceptionEntry();
-			e.caught = new HashSet<>();
-			e.from = derived;
+			e.method = derived;
 			methodGroup.exceptionsFrom.add(e);
+			
+			e = new ExceptionEntry();
+			e.method = methodGroup;
+			derived.exceptionsTo.add(e);
 		}
+		
+		if(method.owner.equals("mp"))
+			method=method;
 		
 		for(MethodNode mn : (List<MethodNode>)cn.methods) {
 			//System.out.println(" "+mn.name+mn.desc);
@@ -491,6 +564,29 @@ public class Main {
 			Set<LabelNode> seenLabels = new HashSet<>();
 			
 			AnalyzerAdapter analyzer = new AnalyzerAdapter(cn.name, mn.access, mn.name, mn.desc, null);
+			
+			// maps handler node to try block object.
+			// uses the handler node as a key because sometimes multiple
+			// exception table entries are generated for a single catch block?
+			Map<LabelNode, TryBlock> tryCatchData = new HashMap<>();
+			
+			for(TryCatchBlockNode tcbn : mn.tryCatchBlocks) {
+				if(tcbn.type == null) continue; // ignore finally blocks
+				
+				if(tryCatchData.containsKey(tcbn.handler))
+					continue; // ignore "split" exception table entries? (actually, merge them)
+				
+				TryBlock tb = new TryBlock();
+				tb.method = methodGroup;
+				tb.node = tcbn;
+				tb.catches = Class.forName(tcbn.type.replace('/', '.'), false, loader);
+				tb.isReachable = false;
+				tryCatchData.put(tcbn.handler, tb);
+				allTryCatchBlocks.add(tb);
+				
+				if(Error.class.isAssignableFrom(tb.catches) || RuntimeException.class.isAssignableFrom(tb.catches) || tb.catches.isAssignableFrom(RuntimeException.class))
+					tb.isReachable = true;
+			}
 			
 			analyzer.visitCode();
 			for(TryCatchBlockNode tcbn : mn.tryCatchBlocks)
@@ -507,33 +603,33 @@ public class Main {
 				} else if(in.getOpcode() == Opcodes.ATHROW) {
 					String type = (String)analyzer.stack.get(analyzer.stack.size() - 1);
 					type = type.replace('/', '.');
+					Class<?> excClass = Class.forName(type, false, loader);
 					
 					// Determine which try-catch blocks this throw is inside.
-					Set<String> caught = new HashSet<String>();
+					List<TryBlock> insideHandlers = new ArrayList<TryBlock>();
 					for(TryCatchBlockNode tcb : (List<TryCatchBlockNode>)mn.tryCatchBlocks) {
 						if(seenLabels.contains(tcb.start) && !seenLabels.contains(tcb.end)) {
 							if(tcb.type != null) // ignore finally blocks
-								caught.add(tcb.type.replace('/', '.'));
+								if(!insideHandlers.contains(tryCatchData.get(tcb.handler)))
+									insideHandlers.add(tryCatchData.get(tcb.handler));
 						}
 					}
 					
 					
-					boolean isCaught = caught.contains(type) || type.equals("java.lang.Throwable") || type.equals("java.lang.Error") || type.equals("java.lang.RuntimeException");
-					for(Class<?> sc : getAllSupers(Class.forName(type, false, loader)))
-						if(caught.contains(sc.getName()) || sc == RuntimeException.class || sc == Error.class)
-							isCaught = true;
-					
-					if(!isCaught)
+					// Find the first one, out of those, that will catch the exception
+					TryBlock caughtBy = searchExceptionHandlerTable(insideHandlers, excClass, true);
+					if(caughtBy == null && isCheckedException(excClass))
 						methodGroup.exceptions.add(type);
 					
 				} else if(in instanceof MethodInsnNode) {
 					
 					// Determine which try-catch blocks this call is inside.
-					Set<String> caught = new HashSet<String>();
+					List<TryBlock> insideHandlers = new ArrayList<TryBlock>();
 					for(TryCatchBlockNode tcb : (List<TryCatchBlockNode>)mn.tryCatchBlocks) {
 						if(seenLabels.contains(tcb.start) && !seenLabels.contains(tcb.end)) {
 							if(tcb.type != null) // ignore finally blocks
-								caught.add(tcb.type.replace('/', '.'));
+								if(!insideHandlers.contains(tryCatchData.get(tcb.handler)))
+									insideHandlers.add(tryCatchData.get(tcb.handler));
 						}
 					}
 					
@@ -548,39 +644,23 @@ public class Main {
 					if(min.owner.startsWith("["))
 						isCalledMethodObfuscated = false;
 					
-					try {
-						systemOwnerClass = Class.forName(min.owner.replace('/', '.'), false, isCalledMethodObfuscated ? ClassLoader.getSystemClassLoader() : loader);
-					} catch(ClassNotFoundException e) {
-					}
+					if(!isCalledMethodObfuscated)
+						try {
+							systemOwnerClass = Class.forName(min.owner.replace('/', '.'), false, isCalledMethodObfuscated ? ClassLoader.getSystemClassLoader() : loader);
+						} catch(ClassNotFoundException e) {
+						}
+					else
+						try {
+							systemOwnerClass = Class.forName(min.owner.replace('/', '.'), false, ClassLoader.getSystemClassLoader());
+							isCalledMethodObfuscated = false;
+						} catch(ClassNotFoundException e) {
+						}
 					
 					
 					
 					Type calledType = Type.getMethodType(min.desc);
 					Type[] argTypes = calledType.getArgumentTypes();
-					Class[] argClasses = new Class[argTypes.length];
-					
-					// convert Types to Classes
-					for(int k = 0; k < argTypes.length; k++) {
-						Type t = argTypes[k];
-						
-						switch(t.getSort()) {
-						case Type.OBJECT:
-							argClasses[k] = loader.loadClass(t.getClassName());
-							break;
-						case Type.ARRAY:
-							argClasses[k] = Class.forName(t.getInternalName().replace('/', '.'), false, loader);
-							break;
-						case Type.BOOLEAN: argClasses[k] = boolean.class; break;
-						case Type.BYTE: argClasses[k] = byte.class; break;
-						case Type.CHAR: argClasses[k] = char.class; break;
-						case Type.DOUBLE: argClasses[k] = double.class; break;
-						case Type.FLOAT: argClasses[k] = float.class; break;
-						case Type.INT: argClasses[k] = int.class; break;
-						case Type.LONG: argClasses[k] = long.class; break;
-						case Type.SHORT: argClasses[k] = short.class; break;
-						default: throw new Exception(t.toString());
-						}
-					}
+					Class[] argClasses = typesToClasses(argTypes);
 					
 					
 					
@@ -644,32 +724,51 @@ public class Main {
 							}
 						}
 						
-						exceptions: for(Class<?> excClass : exceptionTypes) {
-							if(RuntimeException.class.isAssignableFrom(excClass) || Error.class.isAssignableFrom(excClass))
-								continue;
-							if(caught.contains(excClass.getName()))
-								continue;
+						for(Class<?> excClass : exceptionTypes) {
 							
+							// CloneNotSupportedException is not actually thrown by arrays.
 							if(excClass == CloneNotSupportedException.class && systemOwnerClass.isArray())
 								continue;
 							
-							for(Class<?> sc : getAllSupers(excClass))
-								if(caught.contains(sc.getName()))
-									continue exceptions;
+							// Find where this exception is caught.
+							TryBlock caughtBy = null;
+							for(TryBlock tb : insideHandlers) {
+								if(excClass.isAssignableFrom(tb.catches))
+									tb.isReachable = true;
+								if(tb.catches.isAssignableFrom(excClass)) {
+									caughtBy = tb;
+									break;
+								}
+							}
 							
-							//if(mn.name.equals("toString"))
-							//	System.err.println(method.owner+"/"+mn.name+mn.desc+" throws "+getAllSupers(excClass)+" from "+systemOwnerClass+" catches "+caught);
-							methodGroup.exceptions.add(excClass.getName());
+							if(caughtBy != null)
+								caughtBy.isReachable = true;
+							
+							else {
+								// Not caught; if checked, must appear in method exceptions list
+								
+								if(isCheckedException(excClass))
+									methodGroup.exceptions.add(excClass.getName());
+							}
 						}
 						
 					} else {
 						
+						// called method has unknown exception list.
+						// add a record so whatever exceptions it throws
+						// will be propagated to this one.
+						
 						ExceptionEntry entry = new ExceptionEntry();
-						entry.caught = caught;
-						entry.from = calledGroup;
-						//if(mn.name.equals("toString"))
-						//	System.err.println(method.owner+"/"+mn.name+mn.desc+" propagates from "+calledGroup.srgName+" catches "+caught);
+						entry.tryBlocks = insideHandlers;
+						entry.method = calledGroup;
 						methodGroup.exceptionsFrom.add(entry);
+						
+						entry = new ExceptionEntry();
+						entry.tryBlocks = insideHandlers;
+						entry.method = methodGroup;
+						calledGroup.exceptionsTo.add(entry);
+						for(MethodDetails md2 : calledGroup.allDerived)
+							md2.exceptionsTo.add(entry);
 					}
 				}
 				in.accept(analyzer);
@@ -682,6 +781,83 @@ public class Main {
 		//System.out.println("Method not found: "+method);
 	}
 	
+	private static boolean isCheckedException(Class<?> excClass) {
+		if(RuntimeException.class.isAssignableFrom(excClass)) return false;
+		if(Error.class.isAssignableFrom(excClass)) return false;
+		if(excClass == Throwable.class) return false;
+		return true;
+		
+	}
+
+	private static void addBogusThrows(URLClassLoader loader, Collection<String> classNames) throws Exception {
+		System.out.println("Finding unreachable catch blocks...");
+		
+		for(TryBlock tb : allTryCatchBlocks) {
+			//if(tb.method.ident.owner.equals("bem"))
+			//	System.out.println("for "+tb.catches+" in "+tb.method.ident);
+			if(!tb.isReachable) {
+				System.out.println("unreachable catch block: for "+tb.catches+" in "+tb.method.ident);
+				
+				// find all the methods we could add a bogus throws clause to
+				// to make this catch block reachable
+				Set<MethodDetails> possible = new TreeSet<>();
+				for(ExceptionEntry ee : tb.method.exceptionsFrom) {
+					if(!ee.tryBlocks.contains(tb))
+						continue; // method call outside this try block
+					
+					if(searchExceptionHandlerTable(ee.tryBlocks, tb.catches, false) != tb)
+						continue; // exception would be caught by a different try block
+					
+					possible.add(ee.method);
+				}
+				
+				// Victim preference order:
+				// * A private method only called from this location (Not implemented)
+				// * A method that has this exception caught by all its call sites
+				// * A non-private method only called from this location
+				
+				MethodDetails withOtherCatchBlocks = null;
+				MethodDetails onlyCalledHere = null;
+				MethodDetails onlyCalledHereAndPrivate = null;
+				for(MethodDetails md : possible) {
+					if(md.exceptionsTo.size() == 1 && md.group.methods.size() == 1) {
+						onlyCalledHere = md;
+						
+					} else if(withOtherCatchBlocks == null) {
+						
+						withOtherCatchBlocks = md;
+						
+						// see if, everywhere else this method is called, the exception
+						// would be caught
+						for(MethodDetails gmd : md.group.methods)
+							for(ExceptionEntry ee : gmd.exceptionsTo)
+								if(!ee.method.equals(md) && searchExceptionHandlerTable(ee.tryBlocks, tb.catches, false) == null) {
+									withOtherCatchBlocks = null;
+									break;
+								}
+					}
+				}
+				
+				MethodDetails picked = null;
+				if(onlyCalledHereAndPrivate != null) picked = onlyCalledHereAndPrivate;
+				else if(withOtherCatchBlocks != null) picked = withOtherCatchBlocks;
+				else if(onlyCalledHere != null) picked = onlyCalledHere;
+				
+				if(picked.ident.name.equals("ac"))
+					picked = picked;
+				
+				if(picked == null)
+					System.out.println("  Bogus exception victim: NONE CHOSEN!");
+				else {
+					System.out.println("  Bogus exception victim: "+picked);
+					for(MethodDetails md : picked.group.methods)
+						md.exceptions.add(tb.catches.getName());
+				}
+				
+			}
+		}
+	}
+
 	static void doExceptionPropagation(ClassLoader loader, Collection<MethodDetails> methods) throws Exception {
 		boolean changed = true;
 		int passNo = 0;
@@ -698,21 +874,18 @@ public class Main {
 				
 				for(ExceptionEntry e : g1.exceptionsFrom) {
 					
-					exceptions: for(String excClassName : e.from.exceptions) {
+					exceptions: for(String excClassName : e.method.exceptions) {
 						Class<?> excClass = loader.loadClass(excClassName);
 						
-						if(e.caught.contains(excClass.getName()))
-							continue exceptions;
+						TryBlock caughtBy = searchExceptionHandlerTable(e.tryBlocks, excClass, true);
 						
-						for(Class<?> sc : getAllSupers(excClass))
-							if(e.caught.contains(sc.getName()))
-								continue exceptions;
-						
-						if(g1.exceptions.add(excClassName)) {
-							if(g1.group.srgName.equals("run")/* || excClassName.equals("java.lang.CloneNotSupportedException")*/)
-								System.err.println("adding "+excClassName+" to "+g1.group.srgName+" from "+e.from);
-							numAdded++;
-							changedGroup = true;
+						if(caughtBy == null) {
+							if(g1.exceptions.add(excClassName)) {
+								if(g1.group.srgName.equals("run")/* || excClassName.equals("java.lang.CloneNotSupportedException")*/)
+									System.err.println("adding "+excClassName+" to "+g1.group.srgName+" from "+e.method);
+								numAdded++;
+								changedGroup = true;
+							}
 						}
 					}
 				}

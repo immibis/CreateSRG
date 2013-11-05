@@ -2294,7 +2294,7 @@ field_1_TileEntity_L worldObj
 field_5_Entity_L worldObj
 field_4_GuiContainer_I xSize
 field_5_GuiContainer_I ySize
-field_0_RayTraceResult_I blockZ
+field_0_RayTraceResult_I blockX
 field_1_RayTraceResult_I blockY
 field_2_RayTraceResult_I blockZ
 field_0_World_Random rand
