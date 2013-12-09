@@ -304,35 +304,35 @@ kq mc/DispenseActionBoat
 kr mc/InvalidThingException
 ks mc/EmptyKS
 kt mc/InvalidThingException_Data
-ku mc/_ku_ne
+ku mc/DedicatedServerCommandQueueEntry
 kv mc/_kv_ne
 kw mc/LevelConvertProgressUpdater
-kx mc/_kx_ne
+kx mc/ThreadServerShutdown
 ky mc/ThreadServer
 kz mc/CrashCallableProfilerPosition
 la mc/CrashCallableVec3PoolSize
 lb mc/CrashCallablePlayerCount
 lc mc/PlayerDistanceToBlockComparator
 ld mc/ServerConfigurationManager
-le mc/_le_ne
+le mc/IDedicatedServer
 lf mc/Scoreboard2
-lg mc/_lg_ne
+lg mc/ServerProperties
 lh mc/ITickable
-li mc/_li_ne
-lj mc/_lj_ne
-lk mc/_lk_ne
-ll mc/_ll_ne
-lm mc/_lm_ne
-ln mc/_ln_ne
-lo mc/_lo_ne
-lp mc/_lp_ne
-lq mc/_lq_ne
-lr mc/_lr_ne
-ls mc/_ls_ne
-lt mc/_lt_ne
-lu mc/_lu_ne
-lv mc/_lv_ne
-lw mc/_lw_ne
+li mc/DedicatedServerConfigurationManager
+lj mc/DedicatedServer
+lk mc/ThreadServerSleep
+ll mc/DedicatedServer_ConsoleInputThread
+lm mc/DedicatedServer_CallableIsModded
+ln mc/DedicatedServer_CallableServerType
+lo mc/DedicatedServerGUI
+lp mc/DedicatedServerGUI_WindowListener
+lq mc/DedicatedServerGUI_ActionListener1
+lr mc/DedicatedServerGUI_FocusListener
+ls mc/DedicatedServerGUI_LogHandlerThread
+lt mc/DedicatedServerGUI_LogMessageRunnable
+lu mc/DedicatedServerGUI_PlayerList
+lv mc/DedicatedServerGUI_StatsPanel
+lw mc/DedicatedServerGUI_ActionListener2
 lx mc/_lx_ne
 ly mc/_ly_ne
 lz mc/ExtendedTupleIntIntIntInt
@@ -369,14 +369,14 @@ nd mc/NetHandlerImplLoginC2S
 ne mc/ThreadVerifyUsername
 nf mc/EnumLoginState
 ng mc/NetHandlerImplStatusC2S
-nh mc/_nh_ne
-ni mc/_ni_ne
-nj mc/_nj_ne
-nk mc/_nk_ne
-nl mc/_nl_ne
-nm mc/_nm_ne
-nn mc/_nn_ne
-no mc/_no_ne
+nh mc/QueryResponseBuilder
+ni mc/QueryRconHelper1
+nj mc/RconCommandSender
+nk mc/QueryRconListenerBase
+nl mc/QueryListener
+nm mc/QueryConnectionState
+nn mc/RconConnectionHandler
+no mc/RconListener
 np mc/StatAchievement
 nq mc/AchievementInitializer
 nr mc/AchievementTextFormatter
@@ -2253,8 +2253,40 @@ field_145_Items_L record_ward
 field_146_Items_L record_11
 field_147_Items_L record_wait
 
+field_0_Material_L cactus
+field_1_Material_L clay
+field_2_Material_L pumpkin
+field_3_Material_L dragonEgg
+field_4_Material_L portal
+field_5_Material_L cake
+field_6_Material_L web
+field_7_Material_L piston
 field_9_Material_L air
+field_10_Material_L grass
+field_11_Material_L dirt
+field_12_Material_L wood
+field_13_Material_L stone
 field_14_Material_L iron
+field_15_Mateiral_L anvil
+field_16_Material_L water
+field_17_Material_L lava
+field_18_Material_L leaves
+field_19_Material_L plant
+field_20_Material_L tallGrass
+field_21_Material_L sponge
+field_22_Material_L wool
+field_23_Material_L fire
+field_24_Material_L soulSand
+field_25_Material_L destroyableByAnvil
+field_26_Material_L carpet
+field_27_Material_L glass
+field_28_Material_L redstoneLamp
+field_29_Material_L tnt
+field_30_Material_L unused
+field_31_Material_L ice
+field_32_Material_L packedIce
+field_33_Material_L snowLayer
+field_34_Material_L snowBlock
 
 func_0_NBTCompound_VStringNBTTag setTag
 func_0_NBTCompound_VStringB setByte
@@ -2374,3 +2406,19 @@ field_0_TextureMap_L locationBlocksTexture
 field_1_TextureMap_L locationItemsTexture
 field_2_GuiScreen_L mc
 func_0_GLUtils2_II generateDisplayLists
+field_2_Minecraft_File mcDir
+
+func_0_World_ZEntity spawnEntity server
+func_1_ZEntity spawnEntity client
+
+field_3_Block_L registry server
+field_4_Block_L registry client
+
+func_1_Block_String getUnlocalizedName server
+func_2_Block_String getUnlocalizedName client
+
+func_4_Block_Z hasRandomTicks server
+func_6_Block_Z hasRandomTicks client
+
+func_4_Z canProvidePower server
+func_8_Z canProvidePower client
