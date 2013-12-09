@@ -1,8 +1,6 @@
-import gnu.trove.list.array.TByteArrayList;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Constructor;
@@ -14,7 +12,6 @@ import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -24,7 +21,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
 import java.util.jar.JarInputStream;
 
 import org.objectweb.asm.ClassReader;
@@ -33,15 +29,11 @@ import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.AnalyzerAdapter;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TryCatchBlockNode;
-
-import com.google.common.collect.ArrayListMultimap;
-import com.google.common.collect.Multimap;
 
 
 public class Main {
@@ -238,6 +230,8 @@ public class Main {
 				String line = s.nextLine();
 				String[] parts = line.split(" ");
 				if(parts.length == 0 || parts[0].startsWith("#") || line.trim().equals(""))
+					continue;
+				if(parts.length >= 3 && !parts[2].equals(side))
 					continue;
 				knownClassDeobfNames.put(parts[0], parts[1]);
 			}
